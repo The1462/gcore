@@ -190,12 +190,19 @@ func main() {
 			guestCmd,
 		}
 
+		appsPath := *vmApps
+		if appsPath != "" {
+			if _, err := os.Stat(appsPath); os.IsNotExist(err) {
+				appsPath = ""
+			}
+		}
+
 		vmCfg := VMRunnerConfig{
 			Name:        *vmName,
 			VCPUs:       *vmCPUs,
 			MemMB:       *vmMem,
 			RootFS:      *vmRootFS,
-			AppsDisk:    *vmApps,
+			AppsDisk:    appsPath,
 			ConfigsDisk: *vmConfigs,
 			StorageDisk: *vmStorage,
 			ExecArgs:    execArgs,

@@ -4,9 +4,10 @@ krun_worker
 gcore
 
 # Local configurations (contains credentials)
-config.yaml
-*.yaml
-*.yml
+/config.yaml
+/config.yml
+/*.local.yaml
+/*.local.yml
 
 # Virtual machine files and disk images
 vms/rootfs/

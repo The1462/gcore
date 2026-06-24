@@ -1,0 +1,80 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build and Release Assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+
+      - name: Install dependencies and cross-compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu tar curl gzip libpipewire-0.3-dev
+
+      - name: Create build directories
+        run: |
+          mkdir -p dist
+          mkdir -p libkrun_amd64
+          mkdir -p libkrun_arm64
+
+      - name: Download libkrun for AMD64
+        run: |
+          curl -L -o libkrun-amd64.tar.gz https://github.com/The1462/libkrun/releases/download/v1.19.1-gcore/libkrun-x86_64.tar.gz
+          tar -xzf libkrun-amd64.tar.gz -C libkrun_amd64
+          rm -f libkrun-amd64.tar.gz
+
+      - name: Download libkrun for ARM64
+        run: |
+          curl -L -o libkrun-arm64.tar.gz https://github.com/The1462/libkrun/releases/download/v1.19.1-gcore/libkrun-aarch64.tar.gz
+          tar -xzf libkrun-arm64.tar.gz -C libkrun_arm64
+          rm -f libkrun-arm64.tar.gz
+
+      - name: Build cross-compiled GCore binaries
+        run: |
+          # Inject the version dynamically into downloader
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o dist/gcore-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o dist/gcore-linux-arm64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o dist/gcore-darwin-amd64 .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.Version=${{ github.ref_name }}" -o dist/gcore-darwin-arm64 .
+
+      - name: Build krun_worker helper binaries (CGO)
+        run: |
+          # Compile AMD64 krun_worker using local GCC
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CGO_CFLAGS="-I$(pwd)/libkrun_amd64/include" CGO_LDFLAGS="-L$(pwd)/libkrun_amd64/lib64 -lkrun -Wl,-rpath,\$ORIGIN" go build -tags "krun_blk,krun_net" -o dist/krun_worker-linux-amd64 ./cmd/krun_worker/main.go
+          
+          # Cross-compile ARM64 krun_worker using aarch64-linux-gnu-gcc
+          CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CGO_CFLAGS="-I$(pwd)/libkrun_arm64/include" CGO_LDFLAGS="-L$(pwd)/libkrun_arm64/lib64 -lkrun -Wl,-rpath,\$ORIGIN" go build -tags "krun_blk,krun_net" -o dist/krun_worker-linux-arm64 ./cmd/krun_worker/main.go
+
+      - name: Build Guest OS RootFS Image
+        run: |
+          # Build Docker guest image and export rootfs
+          ./dist/gcore-linux-amd64 prepare --dir=vms/rootfs
+          tar -czf dist/gcore-rootfs.tar.gz -C vms rootfs
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/gcore-linux-amd64
+            dist/gcore-linux-arm64
+            dist/gcore-darwin-amd64
+            dist/gcore-darwin-arm64
+            dist/krun_worker-linux-amd64
+            dist/krun_worker-linux-arm64
+            dist/gcore-rootfs.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -110,7 +113,7 @@ func (p *program) run() {
 			VCPUs:       1,
 			MemMB:       1536,
 			RootFS:      "vms/rootfs",
-			AppsDisk:    "vms/gcore_apps.img",
+			AppsDisk:    "", // Apps are preinstalled in rootfs, no need for secondary apps image
 			ConfigsDisk: "vms/gcore_configs.img",
 			StorageDisk: "vms/gcore_storage.img",
 			ExecArgs:    execArgs,
@@ -137,23 +140,15 @@ func (p *program) run() {
 
 // ensureVMReady checks if rootfs and disks exist. If not, it builds/formats them automatically.
 func ensureVMReady() error {
-	// Check if rootfs exists
-	if _, err := os.Stat("vms/rootfs"); os.IsNotExist(err) {
-		log.Println("RootFS not found. Automatically running prepareOS...")
-		if err := prepareOS("vms/rootfs"); err != nil {
-			return fmt.Errorf("prepareOS: %w", err)
-		}
+	// Dynamically download host dynamic libraries (libkrun), worker, and guest rootfs
+	if err := DownloadAndExtractDependencies(); err != nil {
+		return fmt.Errorf("DownloadAndExtractDependencies: %w", err)
 	}
 
 	cfgMutex.RLock()
 	cfg := appConfig
 	cfgMutex.RUnlock()
 
-	// Check if any of the three disk images are missing
-	appsMissing := false
-	if _, err := os.Stat("vms/gcore_apps.img"); os.IsNotExist(err) {
-		appsMissing = true
-	}
 	configsMissing := false
 	if _, err := os.Stat("vms/gcore_configs.img"); os.IsNotExist(err) {
 		configsMissing = true
@@ -163,23 +158,16 @@ func ensureVMReady() error {
 		storageMissing = true
 	}
 
-	if appsMissing || configsMissing {
-		log.Println("Apps or Configs disk image missing. Automatically preparing disk images...")
-		embedDir := "embed/linux_amd64"
-		appsDir := "vms/apps_source"
+	if configsMissing {
+		log.Println("Configs disk image missing. Automatically preparing configs disk image...")
 		configsDir := "vms/configs_source"
-
-		if err := copyServiceBinaries(embedDir, appsDir); err != nil {
-			log.Printf("copyServiceBinaries Warning: %v", err)
-		}
 
 		if err := generateServiceConfigs(configsDir, cfg); err != nil {
 			return fmt.Errorf("generateServiceConfigs: %w", err)
 		}
 
-		if err := prepareDisks(appsDir, "vms/gcore_apps.img", "768M",
-			configsDir, "vms/gcore_configs.img", "128M"); err != nil {
-			return fmt.Errorf("prepareDisks: %w", err)
+		if err := generateExt4Image(configsDir, "vms/gcore_configs.img", "128M"); err != nil {
+			return fmt.Errorf("prepareConfigsDisk: %w", err)
 		}
 	}
 
@@ -197,7 +185,7 @@ func ensureVMReady() error {
 	return nil
 }
 
-// getSvcConfig returns the kardianos service configuration
+// getSvcConfig returns the kardianos service configuration with environment variables
 func getSvcConfig() *service.Config {
 	svcConfig := &service.Config{
 		Name:        "gcore",
@@ -206,9 +194,18 @@ func getSvcConfig() *service.Config {
 		Arguments:   []string{"service", "run"},
 	}
 
-	if cwd, err := os.Getwd(); err == nil {
-		svcConfig.WorkingDirectory = cwd
+	// Read configurations from the registry to pass them as daemon env variables
+	_ = LoadConfig()
+	svcConfig.EnvVars = GetConfigEnvVars(appConfig)
+
+	// Determine working directory (standardized persistent data directory)
+	wd := "/var/lib/gcore"
+	if _, err := os.Stat(wd); os.IsNotExist(err) {
+		if cwd, err := os.Getwd(); err == nil {
+			wd = cwd
+		}
 	}
+	svcConfig.WorkingDirectory = wd
 	return svcConfig
 }
 
@@ -256,9 +253,14 @@ func AutoStartService() {
 	}
 
 	log.Println("Updating GCore background service configuration...")
-	// Stop and uninstall the service first to ensure a fresh, updated unit definition (e.g. correct path/cwd)
+	// Stop and uninstall the service first to ensure a fresh, updated unit definition
 	_ = s.Stop()
 	_ = s.Uninstall()
+
+	if err := ensureBinaryInstalled(); err != nil {
+		log.Printf("Failed to install binary to persistent path: %v", err)
+		return
+	}
 
 	err = s.Install()
 	if err != nil {
@@ -288,6 +290,12 @@ func handleAutoServiceManagement() {
 	if err != nil {
 		// Service is not installed (or failed to query)
 		fmt.Println("GCore background service is not installed. Installing...")
+		
+		if err := ensureBinaryInstalled(); err != nil {
+			fmt.Printf("Failed to copy binary to path: %v\n(Please run with sudo/Administrator privileges!)\n", err)
+			os.Exit(1)
+		}
+
 		err = s.Install()
 		if err != nil {
 			fmt.Printf("Failed to install service: %v\n(Please run with sudo/Administrator privileges!)\n", err)
@@ -325,4 +333,78 @@ func isConfigured() bool {
 	cfgMutex.RLock()
 	defer cfgMutex.RUnlock()
 	return appConfig.LDAPUserPass != ""
+}
+
+func ensureBinaryInstalled() error {
+	execPath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	targetPath := "/usr/local/bin/gcore"
+
+	if execPath == targetPath {
+		return nil
+	}
+
+	if _, err := os.Stat("go.mod"); err == nil {
+		log.Println("Running in development environment, skipping installation to /usr/local/bin/gcore")
+		return nil
+	}
+
+	log.Printf("Copying binary from %s to %s...", execPath, targetPath)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return fmt.Errorf("create target dir: %w", err)
+	}
+
+	src, err := os.Open(execPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+
+	_ = os.MkdirAll("/var/lib/gcore", 0755)
+
+	cmd := exec.Command(targetPath, os.Args[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	err = cmd.Run()
+	if err != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
+	return nil
+}
+
+func isRunningAsService() bool {
+	for _, arg := range os.Args {
+		if arg == "run" || arg == "start" {
+			return true
+		}
+	}
+	return !service.Interactive()
+}
+
+func triggerServiceRestart() {
+	log.Println("Restarting service daemon...")
+	if runtime.GOOS == "linux" {
+		_ = exec.Command("systemctl", "daemon-reload").Run()
+		_ = exec.Command("systemctl", "restart", "gcore").Start()
+		return
+	}
+	prg := &program{}
+	s, err := service.New(prg, getSvcConfig())
+	if err == nil {
+		_ = s.Restart()
+	}
 }

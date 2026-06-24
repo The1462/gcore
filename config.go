@@ -7,12 +7,15 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/kardianos/service"
 	"gopkg.in/yaml.v3"
 )
 
@@ -100,18 +103,192 @@ func init() {
 	}
 }
 
-// LoadConfig reads the configuration file from config.yaml
+// LoadConfig reads the configuration file from config.yaml or environment variables
 func LoadConfig() error {
 	data, err := os.ReadFile(configPath)
-	if os.IsNotExist(err) {
-		return nil // Return empty config
-	} else if err != nil {
-		return err
+	if err == nil {
+		cfgMutex.Lock()
+		err = yaml.Unmarshal(data, &appConfig)
+		cfgMutex.Unlock()
+		if err == nil {
+			return nil
+		}
 	}
 
+	LoadConfigFromEnv()
+	return nil
+}
+
+// LoadConfigFromEnv populates appConfig from process environment variables
+func LoadConfigFromEnv() {
 	cfgMutex.Lock()
 	defer cfgMutex.Unlock()
-	return yaml.Unmarshal(data, &appConfig)
+
+	loadStr := func(target *string, envName string) {
+		if val := os.Getenv(envName); val != "" {
+			*target = val
+		}
+	}
+	loadInt := func(target *int, envName string) {
+		if val := os.Getenv(envName); val != "" {
+			var i int
+			if _, err := fmt.Sscanf(val, "%d", &i); err == nil {
+				*target = i
+			}
+		}
+	}
+	loadBool := func(target *bool, envName string) {
+		if val := os.Getenv(envName); val != "" {
+			*target = (val == "true" || val == "1")
+		}
+	}
+
+	loadStr(&appConfig.CFDomain, "GCORE_CF_DOMAIN")
+	loadStr(&appConfig.CFApiToken, "GCORE_CF_API_TOKEN")
+	loadStr(&appConfig.CFZoneID, "GCORE_CF_ZONE_ID")
+	loadStr(&appConfig.CFAccountID, "GCORE_CF_ACCOUNT_ID")
+	loadStr(&appConfig.CFTunnelID, "GCORE_CF_TUNNEL_ID")
+	loadStr(&appConfig.CFTunnelSecret, "GCORE_CF_TUNNEL_SECRET")
+
+	loadStr(&appConfig.LDAPUserPass, "GCORE_LDAP_USER_PASS")
+	loadStr(&appConfig.MasterUsername, "GCORE_MASTER_USERNAME")
+	loadStr(&appConfig.LDAPBaseDN, "GCORE_LDAP_BASE_DN")
+	loadStr(&appConfig.OrgName, "GCORE_ORG_NAME")
+	loadInt(&appConfig.LDAPPort, "GCORE_LDAP_PORT")
+	loadInt(&appConfig.HTTPPort, "GCORE_HTTP_PORT")
+	loadStr(&appConfig.JWTSecret, "GCORE_JWT_SECRET")
+
+	loadInt(&appConfig.FRPBindPort, "GCORE_FRP_BIND_PORT")
+	loadInt(&appConfig.FRPVhostHTTPPort, "GCORE_FRP_VHOST_HTTP_PORT")
+	loadStr(&appConfig.FRPAuthToken, "GCORE_FRP_AUTH_TOKEN")
+
+	loadBool(&appConfig.ForgejoEnabled, "GCORE_FORGEJO_ENABLED")
+	loadStr(&appConfig.ForgejoSubdomain, "GCORE_FORGEJO_SUBDOMAIN")
+	loadInt(&appConfig.ForgejoHTTPPort, "GCORE_FORGEJO_HTTP_PORT")
+	loadInt(&appConfig.ForgejoSSHPort, "GCORE_FORGEJO_SSH_PORT")
+	loadStr(&appConfig.ForgejoOIDCSecret, "GCORE_FORGEJO_OIDC_SECRET")
+
+	loadBool(&appConfig.PocketIDEnabled, "GCORE_POCKET_ID_ENABLED")
+	loadStr(&appConfig.PocketIDSubdomain, "GCORE_POCKET_ID_SUBDOMAIN")
+	loadInt(&appConfig.PocketIDPort, "GCORE_POCKET_ID_PORT")
+	loadStr(&appConfig.PocketIDSecret, "GCORE_POCKET_ID_SECRET")
+	loadStr(&appConfig.PocketIDEncryptionKey, "GCORE_POCKET_ID_ENCRYPTION_KEY")
+
+	loadBool(&appConfig.StalwartEnabled, "GCORE_STALWART_ENABLED")
+	loadStr(&appConfig.StalwartSubdomain, "GCORE_STALWART_SUBDOMAIN")
+	loadInt(&appConfig.StalwartHTTPPort, "GCORE_STALWART_HTTP_PORT")
+	loadStr(&appConfig.StalwartAdminPassword, "GCORE_STALWART_ADMIN_PASSWORD")
+	loadStr(&appConfig.StalwartOIDCSecret, "GCORE_STALWART_OIDC_SECRET")
+	loadInt(&appConfig.StalwartSMTPPort, "GCORE_STALWART_SMTP_PORT")
+	loadInt(&appConfig.StalwartSMTPSPort, "GCORE_STALWART_SMTPS_PORT")
+	loadInt(&appConfig.StalwartSubmissionPort, "GCORE_STALWART_SUBMISSION_PORT")
+	loadInt(&appConfig.StalwartIMAPPort, "GCORE_STALWART_IMAP_PORT")
+	loadInt(&appConfig.StalwartIMAPSPort, "GCORE_STALWART_IMAPS_PORT")
+	loadInt(&appConfig.StalwartPOP3Port, "GCORE_STALWART_POP3_PORT")
+	loadInt(&appConfig.StalwartPOP3SPort, "GCORE_STALWART_POP3S_PORT")
+	loadInt(&appConfig.StalwartSievePort, "GCORE_STALWART_SIEVE_PORT")
+
+	loadBool(&appConfig.SFTPEnabled, "GCORE_SFTP_ENABLED")
+	loadStr(&appConfig.SFTPSubdomain, "GCORE_SFTP_SUBDOMAIN")
+	loadInt(&appConfig.SFTPPort, "GCORE_SFTP_PORT")
+
+	loadBool(&appConfig.TinyAuthEnabled, "GCORE_TINYAUTH_ENABLED")
+	loadStr(&appConfig.TinyAuthSubdomain, "GCORE_TINYAUTH_SUBDOMAIN")
+	loadInt(&appConfig.TinyAuthPort, "GCORE_TINYAUTH_PORT")
+
+	loadBool(&appConfig.RustFSEnabled, "GCORE_RUSTFS_ENABLED")
+	loadStr(&appConfig.RustFSSubdomain, "GCORE_RUSTFS_SUBDOMAIN")
+	loadInt(&appConfig.RustFSPort, "GCORE_RUSTFS_PORT")
+	loadInt(&appConfig.RustFSConsolePort, "GCORE_RUSTFS_CONSOLE_PORT")
+	loadStr(&appConfig.RustFSAccessKey, "GCORE_RUSTFS_ACCESS_KEY")
+	loadStr(&appConfig.RustFSSecretKey, "GCORE_RUSTFS_SECRET_KEY")
+	loadStr(&appConfig.StorageSize, "GCORE_STORAGE_SIZE")
+}
+
+// GetConfigEnvVars converts Config to environment variables map
+func GetConfigEnvVars(cfg Config) map[string]string {
+	env := make(map[string]string)
+
+	addStr := func(key, val string) {
+		if val != "" {
+			env[key] = val
+		}
+	}
+	addInt := func(key string, val int) {
+		if val != 0 {
+			env[key] = fmt.Sprintf("%d", val)
+		}
+	}
+	addBool := func(key string, val bool) {
+		if val {
+			env[key] = "true"
+		} else {
+			env[key] = "false"
+		}
+	}
+
+	addStr("GCORE_CF_DOMAIN", cfg.CFDomain)
+	addStr("GCORE_CF_API_TOKEN", cfg.CFApiToken)
+	addStr("GCORE_CF_ZONE_ID", cfg.CFZoneID)
+	addStr("GCORE_CF_ACCOUNT_ID", cfg.CFAccountID)
+	addStr("GCORE_CF_TUNNEL_ID", cfg.CFTunnelID)
+	addStr("GCORE_CF_TUNNEL_SECRET", cfg.CFTunnelSecret)
+
+	addStr("GCORE_LDAP_USER_PASS", cfg.LDAPUserPass)
+	addStr("GCORE_MASTER_USERNAME", cfg.MasterUsername)
+	addStr("GCORE_LDAP_BASE_DN", cfg.LDAPBaseDN)
+	addStr("GCORE_ORG_NAME", cfg.OrgName)
+	addInt("GCORE_LDAP_PORT", cfg.LDAPPort)
+	addInt("GCORE_HTTP_PORT", cfg.HTTPPort)
+	addStr("GCORE_JWT_SECRET", cfg.JWTSecret)
+
+	addInt("GCORE_FRP_BIND_PORT", cfg.FRPBindPort)
+	addInt("GCORE_FRP_VHOST_HTTP_PORT", cfg.FRPVhostHTTPPort)
+	addStr("GCORE_FRP_AUTH_TOKEN", cfg.FRPAuthToken)
+
+	addBool("GCORE_FORGEJO_ENABLED", cfg.ForgejoEnabled)
+	addStr("GCORE_FORGEJO_SUBDOMAIN", cfg.ForgejoSubdomain)
+	addInt("GCORE_FORGEJO_HTTP_PORT", cfg.ForgejoHTTPPort)
+	addInt("GCORE_FORGEJO_SSH_PORT", cfg.ForgejoSSHPort)
+	addStr("GCORE_FORGEJO_OIDC_SECRET", cfg.ForgejoOIDCSecret)
+
+	addBool("GCORE_POCKET_ID_ENABLED", cfg.PocketIDEnabled)
+	addStr("GCORE_POCKET_ID_SUBDOMAIN", cfg.PocketIDSubdomain)
+	addInt("GCORE_POCKET_ID_PORT", cfg.PocketIDPort)
+	addStr("GCORE_POCKET_ID_SECRET", cfg.PocketIDSecret)
+	addStr("GCORE_POCKET_ID_ENCRYPTION_KEY", cfg.PocketIDEncryptionKey)
+
+	addBool("GCORE_STALWART_ENABLED", cfg.StalwartEnabled)
+	addStr("GCORE_STALWART_SUBDOMAIN", cfg.StalwartSubdomain)
+	addInt("GCORE_STALWART_HTTP_PORT", cfg.StalwartHTTPPort)
+	addStr("GCORE_STALWART_ADMIN_PASSWORD", cfg.StalwartAdminPassword)
+	addStr("GCORE_STALWART_OIDC_SECRET", cfg.StalwartOIDCSecret)
+	addInt("GCORE_STALWART_SMTP_PORT", cfg.StalwartSMTPPort)
+	addInt("GCORE_STALWART_SMTPS_PORT", cfg.StalwartSMTPSPort)
+	addInt("GCORE_STALWART_SUBMISSION_PORT", cfg.StalwartSubmissionPort)
+	addInt("GCORE_STALWART_IMAP_PORT", cfg.StalwartIMAPPort)
+	addInt("GCORE_STALWART_IMAPS_PORT", cfg.StalwartIMAPSPort)
+	addInt("GCORE_STALWART_POP3_PORT", cfg.StalwartPOP3Port)
+	addInt("GCORE_STALWART_POP3S_PORT", cfg.StalwartPOP3SPort)
+	addInt("GCORE_STALWART_SIEVE_PORT", cfg.StalwartSievePort)
+
+	addBool("GCORE_SFTP_ENABLED", cfg.SFTPEnabled)
+	addStr("GCORE_SFTP_SUBDOMAIN", cfg.SFTPSubdomain)
+	addInt("GCORE_SFTP_PORT", cfg.SFTPPort)
+
+	addBool("GCORE_TINYAUTH_ENABLED", cfg.TinyAuthEnabled)
+	addStr("GCORE_TINYAUTH_SUBDOMAIN", cfg.TinyAuthSubdomain)
+	addInt("GCORE_TINYAUTH_PORT", cfg.TinyAuthPort)
+
+	addBool("GCORE_RUSTFS_ENABLED", cfg.RustFSEnabled)
+	addStr("GCORE_RUSTFS_SUBDOMAIN", cfg.RustFSSubdomain)
+	addInt("GCORE_RUSTFS_PORT", cfg.RustFSPort)
+	addInt("GCORE_RUSTFS_CONSOLE_PORT", cfg.RustFSConsolePort)
+	addStr("GCORE_RUSTFS_ACCESS_KEY", cfg.RustFSAccessKey)
+	addStr("GCORE_RUSTFS_SECRET_KEY", cfg.RustFSSecretKey)
+	addStr("GCORE_STORAGE_SIZE", cfg.StorageSize)
+
+	return env
 }
 
 // SaveConfig updates the configuration file, merging with any existing parameters
@@ -119,6 +296,23 @@ func SaveConfig() error {
 	cfgMutex.RLock()
 	cfg := appConfig
 	cfgMutex.RUnlock()
+
+	if isRunningAsService() {
+		prg := &program{}
+		s, err := service.New(prg, getSvcConfig())
+		if err == nil {
+			log.Println("Updating background service configuration registry...")
+			_ = s.Uninstall()
+			if err := s.Install(); err != nil {
+				log.Printf("Warning: failed to re-install service: %v", err)
+			}
+			go func() {
+				time.Sleep(1 * time.Second)
+				triggerServiceRestart()
+			}()
+		}
+		return nil
+	}
 
 	var rawMap map[string]interface{}
 	data, err := os.ReadFile(configPath)
@@ -407,13 +601,36 @@ func generateGuestInitScript(cfg Config, finalCmd ...string) string {
 	if len(finalCmd) > 0 && finalCmd[0] != "" {
 		suffix = " " + finalCmd[0]
 	}
-	return fmt.Sprintf(`mkdir -p /apps /configs; mount -t ext4 -o ro /dev/vda /apps 2>/dev/null; mount -t ext4 -o ro /dev/vdb /configs 2>/dev/null; exec /bin/bash /configs/vm_init.sh%s`, suffix)
+	hasAppsDisk := false
+	if _, err := os.Stat("vms/gcore_apps.img"); err == nil {
+		hasAppsDisk = true
+	}
+	if hasAppsDisk {
+		return fmt.Sprintf(`mkdir -p /apps /configs; mount -t ext4 -o ro /dev/vda /apps 2>/dev/null; mount -t ext4 -o ro /dev/vdb /configs 2>/dev/null; exec /bin/bash /configs/vm_init.sh%s`, suffix)
+	}
+	return fmt.Sprintf(`mkdir -p /configs; mount -t ext4 -o ro /dev/vda /configs 2>/dev/null; exec /bin/bash /configs/vm_init.sh%s`, suffix)
 }
 
 // writeVMInitScript generates the main VM init script (vm_init.sh) that runs on boot.
 // This file is baked into the configs disk — no libkrun restrictions on content.
 func writeVMInitScript(configsDir string, cfg Config) error {
-	script := `#!/bin/bash
+	hasAppsDisk := false
+	if _, err := os.Stat("vms/gcore_apps.img"); err == nil {
+		hasAppsDisk = true
+	}
+
+	mountSection := `mkdir -p /configs /data
+mount -t ext4 -o ro /dev/vda /configs 2>/dev/null
+mount -t ext4 -o rw /dev/vdb /data 2>/dev/null`
+
+	if hasAppsDisk {
+		mountSection = `mkdir -p /apps /configs /data
+mount -t ext4 -o ro /dev/vda /apps 2>/dev/null
+mount -t ext4 -o ro /dev/vdb /configs 2>/dev/null
+mount -t ext4 -o rw /dev/vdc /data 2>/dev/null`
+	}
+
+	script := fmt.Sprintf(`#!/bin/bash
 # GCore VM init script — runs once when the microVM boots
 env > /var/log/env.log
 mount -t proc proc /proc 2>/dev/null
@@ -437,10 +654,7 @@ for dev in /sys/class/net/*; do
   fi
 done
 echo nameserver 8.8.8.8 > /etc/resolv.conf
-mkdir -p /apps /configs /data
-mount -t ext4 -o ro /dev/vda /apps 2>/dev/null
-mount -t ext4 -o ro /dev/vdb /configs 2>/dev/null
-mount -t ext4 -o rw /dev/vdc /data 2>/dev/null
+%s
 
 # Create git user/group if they don't exist
 if ! getent passwd git >/dev/null; then
@@ -455,7 +669,7 @@ if [ -f /configs/Caddyfile ]; then
 elif [ -f /etc/caddy/Caddyfile ]; then
   /usr/bin/caddy start --config /etc/caddy/Caddyfile 2>/dev/null
 fi
-`
+`, mountSection)
 	// LLDAP
 	if cfg.LDAPUserPass != "" {
 		script += `
