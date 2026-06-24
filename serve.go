@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/cloudflare/cloudflare-go"
 )
-
 
 //go:embed web/*
 var webFS embed.FS
@@ -187,6 +187,34 @@ func RunServe(port int, stopChan chan struct{}) {
 			time.Sleep(1 * time.Second)
 			triggerServiceRestart()
 		}()
+	})
+
+	// GET /api/logs — returns recent daemon logs
+	mux.HandleFunc("/api/logs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		var logOutput string
+		if runtime.GOOS == "linux" {
+			// Fetch last 100 lines of systemd service logs
+			cmd := exec.Command("journalctl", "-u", "gcore", "-n", "100", "--no-pager")
+			out, err := cmd.Output()
+			if err == nil {
+				logOutput = string(out)
+			} else {
+				logOutput = fmt.Sprintf("Failed to retrieve systemd logs: %v", err)
+			}
+		} else {
+			logOutput = "Log viewing is only supported on Linux systemd service environments."
+		}
+
+		resp := map[string]string{
+			"logs": logOutput,
+		}
+		json.NewEncoder(w).Encode(resp)
 	})
 
 	// POST /api/setup — saves configuration
