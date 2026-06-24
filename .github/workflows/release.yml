@@ -54,10 +54,10 @@ jobs:
       - name: Build krun_worker helper binaries (CGO)
         run: |
           # Compile AMD64 krun_worker using local GCC
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CGO_CFLAGS="-I${{ github.workspace }}/libkrun_amd64/include" CGO_LDFLAGS="-L${{ github.workspace }}/libkrun_amd64/lib64 -lkrun -Wl,-rpath,\$ORIGIN -Wl,--allow-shlib-undefined" go build -tags "krun_blk,krun_net" -o dist/krun_worker-linux-amd64 ./cmd/krun_worker/main.go
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CGO_CFLAGS="-I${{ github.workspace }}/libkrun_amd64/include" CGO_LDFLAGS="-L${{ github.workspace }}/libkrun_amd64/lib64 -lkrun -Wl,-rpath,\$ORIGIN -Wl,--allow-shlib-undefined" go build -tags "krun_blk,krun_net" -o dist/krun_worker-linux-amd64 ./cmd/krun_worker
           
           # Cross-compile ARM64 krun_worker using aarch64-linux-gnu-gcc
-          CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CGO_CFLAGS="-I${{ github.workspace }}/libkrun_arm64/include" CGO_LDFLAGS="-L${{ github.workspace }}/libkrun_arm64/lib64 -lkrun -Wl,-rpath,\$ORIGIN -Wl,--allow-shlib-undefined" go build -tags "krun_blk,krun_net" -o dist/krun_worker-linux-arm64 ./cmd/krun_worker/main.go
+          CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CGO_CFLAGS="-I${{ github.workspace }}/libkrun_arm64/include" CGO_LDFLAGS="-L${{ github.workspace }}/libkrun_arm64/lib64 -lkrun -Wl,-rpath,\$ORIGIN -Wl,--allow-shlib-undefined" go build -tags "krun_blk,krun_net" -o dist/krun_worker-linux-arm64 ./cmd/krun_worker
 
       - name: Build Guest OS RootFS Image
         run: |
