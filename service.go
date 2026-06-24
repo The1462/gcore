@@ -366,10 +366,11 @@ func ensureBinaryInstalled() error {
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
 
-	if _, err := io.Copy(dst, src); err != nil {
-		return err
+	_, copyErr := io.Copy(dst, src)
+	dst.Close() // Explicitly close to release the file lock before executing
+	if copyErr != nil {
+		return copyErr
 	}
 
 	_ = os.MkdirAll("/var/lib/gcore", 0755)
@@ -380,6 +381,7 @@ func ensureBinaryInstalled() error {
 	cmd.Stdin = os.Stdin
 	err = cmd.Run()
 	if err != nil {
+		log.Printf("Failed to execute installed binary: %v", err)
 		os.Exit(1)
 	}
 	os.Exit(0)
