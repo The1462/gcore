@@ -478,6 +478,10 @@ func SaveConfig() error {
 		return err
 	}
 
+	// Force regeneration of configs disk image with the updated parameters
+	_ = os.Remove("vms/gcore_configs.img")
+
+
 	if isRunningAsService() {
 		prg := &program{}
 		s, err := service.New(prg, getSvcConfig())
