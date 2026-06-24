@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/cloudflare/cloudflare-go"
 )
+
 
 //go:embed web/*
 var webFS embed.FS
@@ -102,8 +104,89 @@ func RunServe(port int, stopChan chan struct{}) {
 			"rustfs_access_key":      cfg.RustFSAccessKey,
 			"rustfs_secret_key":      cfg.RustFSSecretKey,
 			"storage_size":           cfg.StorageSize,
+			"version":                getVersion(),
 		}
 		json.NewEncoder(w).Encode(resp)
+	})
+
+	// GET /api/check-update — checks if an update is available
+	mux.HandleFunc("/api/check-update", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		current := getVersion()
+		latest, err := getLatestGcoreReleaseTag()
+		if err != nil {
+			log.Printf("[serve] Failed to check for latest update: %v", err)
+			latest = current
+		}
+
+		resp := map[string]interface{}{
+			"current_version": current,
+			"latest_version":  latest,
+			"update_available": current != latest && latest != "",
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	// POST /api/update — performs self-update
+	mux.HandleFunc("/api/update", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		latest, err := getLatestGcoreReleaseTag()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"Failed to find latest release tag: %s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		execPath, err := os.Executable()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"Failed to find executable path: %s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		arch := runtime.GOARCH
+		url := fmt.Sprintf("https://github.com/The1462/gcore/releases/download/%s/gcore-linux-%s", latest, arch)
+		log.Printf("[updater] Downloading update from %s...", url)
+
+		tmpPath := execPath + ".tmp"
+		_ = os.Remove(tmpPath)
+
+		if err := downloadFile(url, tmpPath); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"Download failed: %s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		if fi, err := os.Stat(tmpPath); err != nil || fi.Size() < 1000000 {
+			_ = os.Remove(tmpPath)
+			http.Error(w, `{"error":"Downloaded binary is invalid or incomplete"}`, http.StatusInternalServerError)
+			return
+		}
+
+		// On Linux/Unix, replacing a running executable requires unlinking the old one first
+		_ = os.Remove(execPath)
+		if err := os.Rename(tmpPath, execPath); err != nil {
+			_ = os.Remove(tmpPath)
+			http.Error(w, fmt.Sprintf(`{"error":"Failed to replace binary: %s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+
+		_ = os.Chmod(execPath, 0755)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"success":true}`))
+		log.Println("[updater] Update successfully downloaded and installed. Restarting daemon service...")
+
+		go func() {
+			time.Sleep(1 * time.Second)
+			triggerServiceRestart()
+		}()
 	})
 
 	// POST /api/setup — saves configuration

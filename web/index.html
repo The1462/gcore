@@ -48,7 +48,11 @@ input:focus { outline: none; border-color: #58a6ff; }
     <span style="flex:1"></span>
     <span class="status-dot" :class="vmReady ? 'green' : 'yellow'"></span>
     <span>{{ vmReady ? 'VM Ready' : 'VM Not Built' }}</span>
-    <a href="" class="btn btn-secondary" style="font-size:12px;padding:4px 12px;text-decoration:none">Refresh</a>
+    <span style="margin-left:16px;color:#8b949e;font-size:13px">v{{ currentVersion }}</span>
+    <button v-if="updateAvailable" class="btn btn-primary" style="font-size:12px;padding:4px 12px;background:#d29922;margin-left:8px" @click="performUpdate" :disabled="updating">
+      {{ updating ? 'Updating...' : 'Update to ' + latestVersion }}
+    </button>
+    <a href="" class="btn btn-secondary" style="font-size:12px;padding:4px 12px;text-decoration:none;margin-left:8px">Refresh</a>
   </div>
 
   <h1>GCore Setup</h1>
@@ -167,6 +171,12 @@ createApp({
     const resultText = ref('');
     const resultClass = ref('');
 
+    // Self-update states
+    const currentVersion = ref('1.0.0');
+    const latestVersion = ref('');
+    const updateAvailable = ref(false);
+    const updating = ref(false);
+
     // Form fields
     const ldap_user_pass = ref('');
     const master_username = ref('sysadmin');
@@ -206,6 +216,7 @@ createApp({
         if (data.port) port.value = data.port;
         if (data.configured !== undefined) configured.value = data.configured;
         if (data.vm_ready !== undefined) vmReady.value = data.vm_ready;
+        if (data.version) currentVersion.value = data.version;
 
         ldap_user_pass.value = data.ldap_user_pass || '';
         master_username.value = data.master_username || 'sysadmin';
@@ -237,6 +248,16 @@ createApp({
         if (data.tinyauth_enabled !== undefined) tinyauth_enabled.value = data.tinyauth_enabled;
         if (data.tinyauth_subdomain) tinyauth_subdomain.value = data.tinyauth_subdomain;
         if (data.tinyauth_port) tinyauth_port.value = data.tinyauth_port;
+
+        // Check for updates
+        try {
+          const rUpdate = await fetch('/api/check-update');
+          const updateData = await rUpdate.json();
+          latestVersion.value = updateData.latest_version;
+          updateAvailable.value = updateData.update_available;
+        } catch (ue) {
+          console.error("Failed to check for updates", ue);
+        }
       } catch (e) {
         console.error(e);
       }
@@ -293,6 +314,31 @@ createApp({
       saving.value = false;
     };
 
+    const performUpdate = async () => {
+      updating.value = true;
+      resultText.value = '';
+      try {
+        const r = await fetch('/api/update', { method: 'POST' });
+        const data = await r.json();
+        if (data.success) {
+          resultClass.value = 'success';
+          resultText.value = 'Update installed successfully! The GCore daemon is restarting. Please wait 5 seconds and refresh...';
+          updateAvailable.value = false;
+          // Reload page after 5 seconds automatically
+          setTimeout(() => {
+            window.location.reload();
+          }, 5000);
+        } else {
+          resultClass.value = 'error';
+          resultText.value = data.error || 'Update failed';
+        }
+      } catch (e) {
+        resultClass.value = 'error';
+        resultText.value = 'Update error: ' + e.message;
+      }
+      updating.value = false;
+    };
+
     const resetForm = () => {
       ldap_user_pass.value = '';
       master_username.value = 'sysadmin';
@@ -314,6 +360,7 @@ createApp({
 
     return {
       port, loaded, configured, vmReady, saving, resultText, resultClass,
+      currentVersion, latestVersion, updateAvailable, updating,
       ldap_user_pass, master_username, org_name, ldap_base_dn, ldap_port, http_port,
       cf_domain, cf_api_token,
       forgejo_enabled, forgejo_subdomain, forgejo_http_port, forgejo_ssh_port,
@@ -321,7 +368,7 @@ createApp({
       stalwart_enabled, stalwart_subdomain, stalwart_http_port,
       sftp_enabled, sftp_subdomain, sftp_port,
       tinyauth_enabled, tinyauth_subdomain, tinyauth_port,
-      saveConfig, resetForm
+      saveConfig, resetForm, performUpdate
     };
   }
 }).mount('#app');
