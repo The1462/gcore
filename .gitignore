@@ -1,0 +1,30 @@
+# Binary builds
+bin/
+krun_worker
+gcore
+
+# Local configurations (contains credentials)
+config.yaml
+*.yaml
+*.yml
+
+# Virtual machine files and disk images
+vms/rootfs/
+vms/configs_source/
+vms/apps_source/bin/
+vms/*.img
+vms/gcore_apps.img
+vms/gcore_configs.img
+vms/gcore_storage.img
+
+# Libraries and outputs
+libkrun_out/
+third_party/
+debug_vm.log
+embed/
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+*.log

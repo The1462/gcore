@@ -1,0 +1,1 @@
+{"@type":"create","object":"Application","value":{"webui":{"description":"WebUI","enabled":true,"resourceUrl":"https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip","urlPrefix":{"/admin":true,"/account":true}}}}

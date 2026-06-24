@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GCore Setup</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #c9d1d9; display: flex; justify-content: center; padding: 40px 20px; }
+.container { max-width: 720px; width: 100%; }
+h1 { font-size: 24px; margin-bottom: 4px; color: #f0f6fc; }
+.subtitle { font-size: 14px; color: #8b949e; margin-bottom: 24px; }
+.section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+.section h2 { font-size: 16px; color: #f0f6fc; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #21262d; }
+label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
+input[type="text"], input[type="password"], input[type="number"], select { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; margin-bottom: 12px; }
+input:focus { outline: none; border-color: #58a6ff; }
+.hint { font-size: 12px; color: #484f58; margin-top: -10px; margin-bottom: 12px; }
+.row { display: flex; gap: 12px; }
+.row > div { flex: 1; }
+.status-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.status-dot.green { background: #3fb950; }
+.status-dot.red { background: #f85149; }
+.status-dot.yellow { background: #d29922; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
+.btn-primary { background: #238636; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+.btn-secondary:hover { background: #30363d; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+#result { display: none; margin-top: 16px; padding: 12px; border-radius: 6px; }
+#result.success { background: #1a3a1a; border: 1px solid #238636; color: #7ee787; display: block; }
+#result.error { background: #3a1a1a; border: 1px solid #f85149; color: #f85149; display: block; }
+.toggle { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; cursor: pointer; user-select: none; }
+.toggle input { display: none; }
+.toggle-slider { width: 36px; height: 20px; background: #30363d; border-radius: 10px; position: relative; transition: background 0.2s; }
+.toggle-slider::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #c9d1d9; border-radius: 50%; transition: transform 0.2s; }
+.toggle input:checked + .toggle-slider { background: #238636; }
+.toggle input:checked + .toggle-slider::after { transform: translateX(16px); }
+</style>
+</head>
+<body>
+<div class="container" id="app">
+  <div class="status-bar" v-if="loaded">
+    <span class="status-dot" :class="configured ? 'green' : 'red'"></span>
+    <span>{{ configured ? 'Configured' : 'Not Configured' }}</span>
+    <span style="flex:1"></span>
+    <span class="status-dot" :class="vmReady ? 'green' : 'yellow'"></span>
+    <span>{{ vmReady ? 'VM Ready' : 'VM Not Built' }}</span>
+    <a :href="'http://localhost:' + port" class="btn btn-secondary" style="font-size:12px;padding:4px 12px;text-decoration:none">Refresh</a>
+  </div>
+
+  <h1>GCore Setup</h1>
+  <p class="subtitle">Configure your single-VM infrastructure platform</p>
+
+  <div class="section">
+    <h2>Directory Services (LLDAP)</h2>
+    <label>Admin Password</label>
+    <input type="password" v-model="ldap_user_pass" placeholder="Min 6 chars" />
+    <label>Master Username</label>
+    <input type="text" v-model="master_username" placeholder="sysadmin" />
+    <div class="row">
+      <div>
+        <label>Org Name</label>
+        <input type="text" v-model="org_name" placeholder="oggree" />
+      </div>
+      <div>
+        <label>Base DN</label>
+        <input type="text" v-model="ldap_base_dn" placeholder="dc=oggree,dc=com" />
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>LDAP Port</label>
+        <input type="number" v-model.number="ldap_port" />
+      </div>
+      <div>
+        <label>HTTP Port</label>
+        <input type="number" v-model.number="http_port" />
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Cloudflare Zero-Trust (Optional)</h2>
+    <p class="hint">Provide a Cloudflare domain + API token to enable public DNS and tunnels.</p>
+    <label>Domain</label>
+    <input type="text" v-model="cf_domain" placeholder="oggree.com" />
+    <label>API Token</label>
+    <input type="password" v-model="cf_api_token" placeholder="Zone:DNS:Edit, Zone:Read" />
+  </div>
+
+  <div class="section">
+    <h2>Services</h2>
+    <label class="toggle">
+      <input type="checkbox" v-model="forgejo_enabled" />
+      <span class="toggle-slider"></span>
+      Forgejo (Git hosting)
+    </label>
+    <div v-if="forgejo_enabled" class="row">
+      <div><label>Subdomain</label><input type="text" v-model="forgejo_subdomain" /></div>
+      <div><label>HTTP Port</label><input type="number" v-model.number="forgejo_http_port" /></div>
+      <div><label>SSH Port</label><input type="number" v-model.number="forgejo_ssh_port" /></div>
+    </div>
+
+    <label class="toggle">
+      <input type="checkbox" v-model="pocket_id_enabled" />
+      <span class="toggle-slider"></span>
+      Pocket ID (OIDC auth portal)
+    </label>
+    <div v-if="pocket_id_enabled" class="row">
+      <div><label>Subdomain</label><input type="text" v-model="pocket_id_subdomain" /></div>
+      <div><label>Port</label><input type="number" v-model.number="pocket_id_port" /></div>
+    </div>
+
+    <label class="toggle">
+      <input type="checkbox" v-model="stalwart_enabled" />
+      <span class="toggle-slider"></span>
+      Stalwart (Mail server)
+    </label>
+    <div v-if="stalwart_enabled" class="row">
+      <div><label>Subdomain</label><input type="text" v-model="stalwart_subdomain" /></div>
+      <div><label>HTTP Port</label><input type="number" v-model.number="stalwart_http_port" /></div>
+    </div>
+
+    <label class="toggle">
+      <input type="checkbox" v-model="sftp_enabled" />
+      <span class="toggle-slider"></span>
+      SFTP (File serving)
+    </label>
+    <div v-if="sftp_enabled" class="row">
+      <div><label>Subdomain</label><input type="text" v-model="sftp_subdomain" /></div>
+      <div><label>Port</label><input type="number" v-model.number="sftp_port" /></div>
+    </div>
+
+    <label class="toggle">
+      <input type="checkbox" v-model="tinyauth_enabled" />
+      <span class="toggle-slider"></span>
+      TinyAuth (OIDC SSO provider)
+    </label>
+    <div v-if="tinyauth_enabled" class="row">
+      <div><label>Subdomain</label><input type="text" v-model="tinyauth_subdomain" /></div>
+      <div><label>Port</label><input type="number" v-model.number="tinyauth_port" /></div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:12px">
+    <button class="btn btn-primary" @click="saveConfig" :disabled="saving">{{ saving ? 'Saving...' : 'Save Configuration' }}</button>
+    <button class="btn btn-secondary" @click="resetForm">Reset</button>
+  </div>
+
+  <div id="result" :class="resultClass" v-if="resultText">{{ resultText }}</div>
+</div>
+
+<script src="https://unpkg.com/vue@3.4/dist/vue.global.prod.js"></script>
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+
+createApp({
+  setup() {
+    const port = ref(17170);
+    const loaded = ref(false);
+    const configured = ref(false);
+    const vmReady = ref(false);
+    const saving = ref(false);
+    const resultText = ref('');
+    const resultClass = ref('');
+
+    // Form fields
+    const ldap_user_pass = ref('');
+    const master_username = ref('sysadmin');
+    const org_name = ref('oggree');
+    const ldap_base_dn = ref('dc=oggree,dc=com');
+    const ldap_port = ref(3890);
+    const http_port = ref(17170);
+
+    const cf_domain = ref('');
+    const cf_api_token = ref('');
+
+    const forgejo_enabled = ref(true);
+    const forgejo_subdomain = ref('git');
+    const forgejo_http_port = ref(14680);
+    const forgejo_ssh_port = ref(14622);
+
+    const pocket_id_enabled = ref(true);
+    const pocket_id_subdomain = ref('pass');
+    const pocket_id_port = ref(14640);
+
+    const stalwart_enabled = ref(true);
+    const stalwart_subdomain = ref('mail');
+    const stalwart_http_port = ref(14660);
+
+    const sftp_enabled = ref(true);
+    const sftp_subdomain = ref('files');
+    const sftp_port = ref(14670);
+
+    const tinyauth_enabled = ref(true);
+    const tinyauth_subdomain = ref('auth');
+    const tinyauth_port = ref(14690);
+
+    onMounted(async () => {
+      try {
+        const r = await fetch('/api/config');
+        const data = await r.json();
+        if (data.port) port.value = data.port;
+        if (data.configured !== undefined) configured.value = data.configured;
+        if (data.vm_ready !== undefined) vmReady.value = data.vm_ready;
+
+        ldap_user_pass.value = data.ldap_user_pass || '';
+        master_username.value = data.master_username || 'sysadmin';
+        org_name.value = data.org_name || 'oggree';
+        ldap_base_dn.value = data.ldap_base_dn || 'dc=oggree,dc=com';
+        ldap_port.value = data.ldap_port || 3890;
+        http_port.value = data.http_port || 17170;
+
+        cf_domain.value = data.cf_domain || '';
+        cf_api_token.value = data.cf_api_token || '';
+
+        if (data.forgejo_enabled !== undefined) forgejo_enabled.value = data.forgejo_enabled;
+        if (data.forgejo_subdomain) forgejo_subdomain.value = data.forgejo_subdomain;
+        if (data.forgejo_http_port) forgejo_http_port.value = data.forgejo_http_port;
+        if (data.forgejo_ssh_port) forgejo_ssh_port.value = data.forgejo_ssh_port;
+
+        if (data.pocket_id_enabled !== undefined) pocket_id_enabled.value = data.pocket_id_enabled;
+        if (data.pocket_id_subdomain) pocket_id_subdomain.value = data.pocket_id_subdomain;
+        if (data.pocket_id_port) pocket_id_port.value = data.pocket_id_port;
+
+        if (data.stalwart_enabled !== undefined) stalwart_enabled.value = data.stalwart_enabled;
+        if (data.stalwart_subdomain) stalwart_subdomain.value = data.stalwart_subdomain;
+        if (data.stalwart_http_port) stalwart_http_port.value = data.stalwart_http_port;
+
+        if (data.sftp_enabled !== undefined) sftp_enabled.value = data.sftp_enabled;
+        if (data.sftp_subdomain) sftp_subdomain.value = data.sftp_subdomain;
+        if (data.sftp_port) sftp_port.value = data.sftp_port;
+
+        if (data.tinyauth_enabled !== undefined) tinyauth_enabled.value = data.tinyauth_enabled;
+        if (data.tinyauth_subdomain) tinyauth_subdomain.value = data.tinyauth_subdomain;
+        if (data.tinyauth_port) tinyauth_port.value = data.tinyauth_port;
+      } catch (e) {
+        console.error(e);
+      }
+      loaded.value = true;
+    });
+
+    const saveConfig = async () => {
+      saving.value = true;
+      resultText.value = '';
+      try {
+        const r = await fetch('/api/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ldap_user_pass: ldap_user_pass.value,
+            master_username: master_username.value,
+            org_name: org_name.value,
+            ldap_base_dn: ldap_base_dn.value,
+            ldap_port: ldap_port.value,
+            http_port: http_port.value,
+            cf_domain: cf_domain.value,
+            cf_api_token: cf_api_token.value,
+            forgejo_enabled: forgejo_enabled.value,
+            forgejo_subdomain: forgejo_subdomain.value,
+            forgejo_http_port: forgejo_http_port.value,
+            forgejo_ssh_port: forgejo_ssh_port.value,
+            pocket_id_enabled: pocket_id_enabled.value,
+            pocket_id_subdomain: pocket_id_subdomain.value,
+            pocket_id_port: pocket_id_port.value,
+            stalwart_enabled: stalwart_enabled.value,
+            stalwart_subdomain: stalwart_subdomain.value,
+            stalwart_http_port: stalwart_http_port.value,
+            sftp_enabled: sftp_enabled.value,
+            sftp_subdomain: sftp_subdomain.value,
+            sftp_port: sftp_port.value,
+            tinyauth_enabled: tinyauth_enabled.value,
+            tinyauth_subdomain: tinyauth_subdomain.value,
+            tinyauth_port: tinyauth_port.value,
+          })
+        });
+        const data = await r.json();
+        if (data.success) {
+          resultClass.value = 'success';
+          resultText.value = 'Configuration saved! You can now run: make prepare-services prepare-disks run-vm';
+          configured.value = true;
+        } else {
+          resultClass.value = 'error';
+          resultText.value = data.error || 'Save failed';
+        }
+      } catch (e) {
+        resultClass.value = 'error';
+        resultText.value = 'Error: ' + e.message;
+      }
+      saving.value = false;
+    };
+
+    const resetForm = () => {
+      ldap_user_pass.value = '';
+      master_username.value = 'sysadmin';
+      org_name.value = 'oggree';
+      ldap_base_dn.value = 'dc=oggree,dc=com';
+      ldap_port.value = 3890;
+      http_port.value = 17170;
+      cf_domain.value = '';
+      cf_api_token.value = '';
+      forgejo_enabled.value = true;
+      pocket_id_enabled.value = true;
+      stalwart_enabled.value = true;
+      sftp_enabled.value = true;
+      tinyauth_enabled.value = true;
+      tinyauth_subdomain.value = 'auth';
+      tinyauth_port.value = 14690;
+      resultText.value = '';
+    };
+
+    return {
+      port, loaded, configured, vmReady, saving, resultText, resultClass,
+      ldap_user_pass, master_username, org_name, ldap_base_dn, ldap_port, http_port,
+      cf_domain, cf_api_token,
+      forgejo_enabled, forgejo_subdomain, forgejo_http_port, forgejo_ssh_port,
+      pocket_id_enabled, pocket_id_subdomain, pocket_id_port,
+      stalwart_enabled, stalwart_subdomain, stalwart_http_port,
+      sftp_enabled, sftp_subdomain, sftp_port,
+      tinyauth_enabled, tinyauth_subdomain, tinyauth_port,
+      saveConfig, resetForm
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

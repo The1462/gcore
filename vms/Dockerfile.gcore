@@ -1,0 +1,61 @@
+# Dockerfile.gcore - Main OS Image for gcore VM runtime
+#
+# This Dockerfile defines the base operating system (Debian 13 - Trixie)
+# for the microVMs managed by libkrun. The Go application will build this image
+# and export its rootfs so libkrun can use it.
+
+FROM debian:trixie-slim
+
+# Install minimal base utilities required for microVM operations, networking, and debugging
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    iproute2 \
+    ca-certificates \
+    curl \
+    procps \
+    git \
+    openssh-server \
+    openssh-sftp-server \
+    sqlite3 \
+    netcat-openbsd \
+    unzip \
+    && curl -L --output /usr/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+    && chmod +x /usr/bin/cloudflared \
+    && curl -L -o /tmp/lldap.tar.gz https://github.com/lldap/lldap/releases/latest/download/amd64-lldap.tar.gz \
+    && mkdir -p /opt/lldap \
+    && tar -xzf /tmp/lldap.tar.gz -C /opt/lldap \
+    && ln -s /opt/lldap/amd64-lldap/lldap /usr/bin/lldap \
+    && rm -rf /tmp/lldap.tar.gz \
+    && curl -L -o /tmp/caddy.tar.gz "https://github.com/caddyserver/caddy/releases/download/v2.8.4/caddy_2.8.4_linux_amd64.tar.gz" \
+    && tar -xzf /tmp/caddy.tar.gz -C /usr/bin caddy \
+    && chmod +x /usr/bin/caddy \
+    && rm -rf /tmp/caddy.tar.gz \
+    && curl -L -o /tmp/rustfs.zip https://github.com/rustfs/rustfs/releases/download/1.0.0-beta.8/rustfs-linux-x86_64-musl-v1.0.0-beta.8.zip \
+    && unzip -o /tmp/rustfs.zip -d /tmp \
+    && mv /tmp/rustfs /usr/bin/rustfs \
+    && chmod +x /usr/bin/rustfs \
+    && rm -rf /tmp/rustfs.zip \
+    && curl -L -o /usr/bin/forgejo https://codeberg.org/forgejo/forgejo/releases/download/v9.0.2/forgejo-9.0.2-linux-amd64 \
+    && chmod +x /usr/bin/forgejo \
+    && curl -L -o /usr/bin/pocket-id https://github.com/pocket-id/pocket-id/releases/download/v2.9.0/pocket-id-linux-amd64 \
+    && chmod +x /usr/bin/pocket-id \
+    && curl -L -o /usr/bin/tinyauth https://github.com/tinyauthapp/tinyauth/releases/download/v5.0.7/tinyauth-linux-amd64 \
+    && chmod +x /usr/bin/tinyauth \
+    && curl -L -o /tmp/stalwart.tar.gz https://github.com/stalwartlabs/mail-server/releases/download/v0.9.4/stalwart-mail-linux-amd64.tar.gz \
+    && tar -xzf /tmp/stalwart.tar.gz -C /tmp \
+    && mv /tmp/stalwart-mail/stalwart-mail /usr/bin/stalwart \
+    && mv /tmp/stalwart-mail/stalwart-cli /usr/bin/stalwart-cli \
+    && chmod +x /usr/bin/stalwart /usr/bin/stalwart-cli \
+    && rm -rf /tmp/stalwart.tar.gz /tmp/stalwart-mail \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up the default shell and environment
+ENV SHELL=/bin/bash
+ENV HOME=/root
+WORKDIR /root
+
+# Add a simple welcome message or initial configuration
+RUN echo "Welcome to gcore OS (Debian 13 libkrun guest)" > /etc/motd
+
+# The entrypoint can be overridden by libkrun when starting the guest VM
+CMD ["/bin/sh"]

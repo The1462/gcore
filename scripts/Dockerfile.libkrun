@@ -1,0 +1,33 @@
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    python3-pyelftools \
+    flex \
+    bison \
+    curl \
+    bc \
+    rsync \
+    libseccomp-dev \
+    pkg-config \
+    libelf-dev \
+    libasound2-dev
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /src
+
+RUN git clone https://github.com/containers/libkrunfw.git && \
+    cd libkrunfw && \
+    make && \
+    make PREFIX=/build_out install
+
+RUN apt-get install -y clang llvm libclang-dev
+
+RUN git clone https://github.com/libkrun/libkrun.git && \
+    cd libkrun && \
+    make BLK=1 NET=1 SND=1 EFI=1 && \
+    make BLK=1 NET=1 SND=1 EFI=1 PREFIX=/build_out install
