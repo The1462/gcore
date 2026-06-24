@@ -238,7 +238,7 @@ func extractTarGz(tarGzPath, destDir string) error {
 }
 
 func compileKrunWorkerLocal() error {
-	cmd := exec.Command("go", "build", "-tags", "krun_blk,krun_net", "-o", "bin/krun_worker", "./cmd/krun_worker/main.go")
+	cmd := exec.Command("go", "build", "-tags", "krun_blk,krun_net", "-o", "bin/krun_worker", "./cmd/krun_worker")
 	cmd.Env = append(os.Environ(),
 		"CGO_ENABLED=1",
 		"CGO_CFLAGS=-I"+resolvePath("libkrun_out/include"),

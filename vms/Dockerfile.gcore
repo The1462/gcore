@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     netcat-openbsd \
     unzip \
+    xz-utils \
     && curl -L --output /usr/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
     && chmod +x /usr/bin/cloudflared \
     && curl -L -o /tmp/lldap.tar.gz https://github.com/lldap/lldap/releases/latest/download/amd64-lldap.tar.gz \
@@ -39,14 +40,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod +x /usr/bin/forgejo \
     && curl -L -o /usr/bin/pocket-id https://github.com/pocket-id/pocket-id/releases/download/v2.9.0/pocket-id-linux-amd64 \
     && chmod +x /usr/bin/pocket-id \
-    && curl -L -o /usr/bin/tinyauth https://github.com/tinyauthapp/tinyauth/releases/download/v5.0.7/tinyauth-linux-amd64 \
+    && curl -L -o /usr/bin/tinyauth https://github.com/tinyauthapp/tinyauth/releases/download/v5.0.7/tinyauth-amd64 \
     && chmod +x /usr/bin/tinyauth \
-    && curl -L -o /tmp/stalwart.tar.gz https://github.com/stalwartlabs/mail-server/releases/download/v0.9.4/stalwart-mail-linux-amd64.tar.gz \
+    && curl -L -o /tmp/stalwart.tar.gz https://github.com/stalwartlabs/stalwart/releases/download/v0.9.4/stalwart-mail-x86_64-unknown-linux-gnu.tar.gz \
     && tar -xzf /tmp/stalwart.tar.gz -C /tmp \
-    && mv /tmp/stalwart-mail/stalwart-mail /usr/bin/stalwart \
-    && mv /tmp/stalwart-mail/stalwart-cli /usr/bin/stalwart-cli \
+    && mv /tmp/stalwart-mail /usr/bin/stalwart \
+    && rm -rf /tmp/stalwart.tar.gz \
+    && curl -L -o /tmp/stalwart-cli.tar.xz https://github.com/stalwartlabs/cli/releases/download/v1.0.9/stalwart-cli-x86_64-unknown-linux-gnu.tar.xz \
+    && tar -xf /tmp/stalwart-cli.tar.xz -C /tmp \
+    && mv /tmp/stalwart-cli-x86_64-unknown-linux-gnu/stalwart-cli /usr/bin/stalwart-cli \
     && chmod +x /usr/bin/stalwart /usr/bin/stalwart-cli \
-    && rm -rf /tmp/stalwart.tar.gz /tmp/stalwart-mail \
+    && rm -rf /tmp/stalwart-cli.tar.xz /tmp/stalwart-cli-x86_64-unknown-linux-gnu \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up the default shell and environment
