@@ -297,23 +297,6 @@ func SaveConfig() error {
 	cfg := appConfig
 	cfgMutex.RUnlock()
 
-	if isRunningAsService() {
-		prg := &program{}
-		s, err := service.New(prg, getSvcConfig())
-		if err == nil {
-			log.Println("Updating background service configuration registry...")
-			_ = s.Uninstall()
-			if err := s.Install(); err != nil {
-				log.Printf("Warning: failed to re-install service: %v", err)
-			}
-			go func() {
-				time.Sleep(1 * time.Second)
-				triggerServiceRestart()
-			}()
-		}
-		return nil
-	}
-
 	var rawMap map[string]interface{}
 	data, err := os.ReadFile(configPath)
 	if err == nil {
@@ -322,6 +305,7 @@ func SaveConfig() error {
 	if rawMap == nil {
 		rawMap = make(map[string]interface{})
 	}
+
 
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = generateRandomSecret(32)
@@ -490,7 +474,27 @@ func SaveConfig() error {
 		return err
 	}
 
-	return os.WriteFile(configPath, newData, 0600)
+	if err := os.WriteFile(configPath, newData, 0600); err != nil {
+		return err
+	}
+
+	if isRunningAsService() {
+		prg := &program{}
+		s, err := service.New(prg, getSvcConfig())
+		if err == nil {
+			log.Println("Updating background service configuration registry...")
+			_ = s.Uninstall()
+			if err := s.Install(); err != nil {
+				log.Printf("Warning: failed to re-install service: %v", err)
+			}
+			go func() {
+				time.Sleep(1 * time.Second)
+				triggerServiceRestart()
+			}()
+		}
+	}
+
+	return nil
 }
 
 // generateServiceConfigs writes config files for all enabled services into configsDir.
