@@ -1,12 +1,16 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+//go:embed vms/roles.ndjson
+var rolesDataFS embed.FS
 
 // generateBootstrapFiles writes post-boot configuration scripts and ndjson plans
 // into the configs directory so the VM can self-configure on first boot.
@@ -53,10 +57,13 @@ func writeStalwartBootstrap(configsDir string, cfg Config) error {
 	}
 
 	// Copy roles.ndjson from host workspace
-	rolesData, err := os.ReadFile("vms/roles.ndjson")
+	rolesData, err := rolesDataFS.ReadFile("vms/roles.ndjson")
 	if err != nil {
-		// Try fallback
-		rolesData, err = os.ReadFile("../vms/roles.ndjson")
+		// Fallback to local files
+		rolesData, err = os.ReadFile("vms/roles.ndjson")
+		if err != nil {
+			rolesData, err = os.ReadFile("../vms/roles.ndjson")
+		}
 	}
 	if err == nil {
 		if err := os.WriteFile(filepath.Join(bsDir, "roles.ndjson"), rolesData, 0644); err != nil {
