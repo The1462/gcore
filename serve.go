@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/cloudflare/cloudflare-go"
 )
 
 //go:embed web/*
@@ -51,23 +53,23 @@ func RunServe(port int, stopChan chan struct{}) {
 		cfg := appConfig
 		cfgMutex.RUnlock()
 
-		// Check disk images
-		appsOk := false
+		// Check disk images and rootfs directory
 		configsOk := false
 		storageOk := false
-		if _, err := os.Stat("vms/gcore_apps.img"); err == nil {
-			appsOk = true
-		}
+		rootfsOk := false
 		if _, err := os.Stat("vms/gcore_configs.img"); err == nil {
 			configsOk = true
 		}
 		if _, err := os.Stat("vms/gcore_storage.img"); err == nil {
 			storageOk = true
 		}
+		if fi, err := os.Stat("vms/rootfs"); err == nil && fi.IsDir() {
+			rootfsOk = true
+		}
 
 		resp := map[string]interface{}{
 			"configured":             cfg.LDAPUserPass != "",
-			"vm_ready":               appsOk && configsOk && storageOk,
+			"vm_ready":               configsOk && storageOk && rootfsOk,
 			"port":                   port,
 			"ldap_user_pass":         cfg.LDAPUserPass,
 			"master_username":        cfg.MasterUsername,
@@ -155,6 +157,28 @@ func RunServe(port int, stopChan chan struct{}) {
 			return
 		}
 
+		var zoneID, accountID string
+		if payload.CFDomain != "" && payload.CFApiToken != "" {
+			api, err := cloudflare.NewWithAPIToken(payload.CFApiToken)
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"Failed to initialize Cloudflare client: %s"}`, err.Error()), http.StatusBadRequest)
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			zones, err := api.ListZones(ctx, payload.CFDomain)
+			cancel()
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"Cloudflare API error: %s"}`, err.Error()), http.StatusBadRequest)
+				return
+			}
+			if len(zones) == 0 {
+				http.Error(w, fmt.Sprintf(`{"error":"Domain %s not found in your Cloudflare account"}`, payload.CFDomain), http.StatusBadRequest)
+				return
+			}
+			zoneID = zones[0].ID
+			accountID = zones[0].Account.ID
+		}
+
 		cfgMutex.Lock()
 		appConfig.LDAPUserPass = payload.LDAPUserPass
 		appConfig.MasterUsername = payload.MasterUsername
@@ -164,6 +188,8 @@ func RunServe(port int, stopChan chan struct{}) {
 		appConfig.HTTPPort = payload.HTTPPort
 		appConfig.CFDomain = payload.CFDomain
 		appConfig.CFApiToken = payload.CFApiToken
+		appConfig.CFZoneID = zoneID
+		appConfig.CFAccountID = accountID
 
 		appConfig.ForgejoEnabled = payload.ForgejoEnabled
 		appConfig.ForgejoSubdomain = payload.ForgejoSubdomain

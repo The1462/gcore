@@ -48,7 +48,7 @@ input:focus { outline: none; border-color: #58a6ff; }
     <span style="flex:1"></span>
     <span class="status-dot" :class="vmReady ? 'green' : 'yellow'"></span>
     <span>{{ vmReady ? 'VM Ready' : 'VM Not Built' }}</span>
-    <a :href="'http://localhost:' + port" class="btn btn-secondary" style="font-size:12px;padding:4px 12px;text-decoration:none">Refresh</a>
+    <a href="" class="btn btn-secondary" style="font-size:12px;padding:4px 12px;text-decoration:none">Refresh</a>
   </div>
 
   <h1>GCore Setup</h1>
@@ -280,7 +280,7 @@ createApp({
         const data = await r.json();
         if (data.success) {
           resultClass.value = 'success';
-          resultText.value = 'Configuration saved! You can now run: make prepare-services prepare-disks run-vm';
+          resultText.value = 'Configuration saved! The background service daemon will now automatically download dependencies, prepare disk images, and start the guest VM.';
           configured.value = true;
         } else {
           resultClass.value = 'error';
