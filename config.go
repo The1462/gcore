@@ -614,9 +614,9 @@ func generateGuestInitScript(cfg Config, finalCmd ...string) string {
 		hasAppsDisk = true
 	}
 	if hasAppsDisk {
-		return fmt.Sprintf(`mkdir -p /apps /configs; mount -t ext4 -o ro /dev/vda /apps 2>/dev/null; mount -t ext4 -o ro /dev/vdb /configs 2>/dev/null; exec /bin/bash /configs/vm_init.sh%s`, suffix)
+		return fmt.Sprintf(`mkdir -p /apps /configs /data; mount -t ext4 -o ro /dev/vda /apps 2>/dev/null; mount -t ext4 -o ro /dev/vdb /configs 2>/dev/null; lsblk; mount -t ext4 /dev/vdc /data; exec /bin/bash /configs/vm_init.sh%s`, suffix)
 	}
-	return fmt.Sprintf(`mkdir -p /configs; mount -t ext4 -o ro /dev/vda /configs 2>/dev/null; exec /bin/bash /configs/vm_init.sh%s`, suffix)
+	return fmt.Sprintf(`mkdir -p /configs /data; mount -t ext4 -o ro /dev/vda /configs 2>/dev/null; mount -t ext4 /dev/vdb /data 2>/dev/null; exec /bin/bash /configs/vm_init.sh%s`, suffix)
 }
 
 // writeVMInitScript generates the main VM init script (vm_init.sh) that runs on boot.
@@ -664,6 +664,8 @@ done
 echo nameserver 8.8.8.8 > /etc/resolv.conf
 %s
 
+
+
 # Create git user/group if they don't exist
 if ! getent passwd git >/dev/null; then
   groupadd -g 1000 git 2>/dev/null || groupadd git
@@ -673,9 +675,18 @@ fi
 
 # Start Caddy reverse proxy
 if [ -f /configs/Caddyfile ]; then
-  /usr/bin/caddy start --config /configs/Caddyfile 2>/dev/null
+  /usr/bin/caddy start --config /configs/Caddyfile >/var/log/caddy.log 2>&1
 elif [ -f /etc/caddy/Caddyfile ]; then
-  /usr/bin/caddy start --config /etc/caddy/Caddyfile 2>/dev/null
+  /usr/bin/caddy start --config /etc/caddy/Caddyfile >/var/log/caddy.log 2>&1
+fi
+
+# Trust Caddy's local root CA certificate (wait for creation if needed)
+sleep 1
+if [ -f /.local/share/caddy/pki/authorities/local/root.crt ]; then
+  mkdir -p /usr/local/share/ca-certificates/
+  cp /.local/share/caddy/pki/authorities/local/root.crt /usr/local/share/ca-certificates/caddy-root.crt 2>/dev/null
+  update-ca-certificates 2>/dev/null
+  echo "[init] Successfully trusted Caddy local root CA certificate" >> /var/log/net_test.log
 fi
 `, mountSection)
 	// LLDAP
@@ -692,6 +703,12 @@ mkdir -p /var/lib/lldap
 		script += `
 # TinyAuth SSO Service
 if [ -f /usr/bin/tinyauth ] && [ -f /configs/tinyauth.env ]; then
+  for i in $(seq 1 30); do
+    if nc -z localhost 3890; then
+      break
+    fi
+    sleep 1
+  done
   mkdir -p /data
   set -a
   source /configs/tinyauth.env
@@ -738,6 +755,7 @@ if [ -f /usr/bin/stalwart ]; then
   mkdir -p /data/stalwart
   export STALWART_RECOVERY_ADMIN="admin:%s"
   export STALWART_RECOVERY_MODE_PORT="%d"
+  export STALWART_RECOVERY_MODE="1"
   /usr/bin/stalwart --config /configs/stalwart/config.json >/var/log/stalwart.log 2>&1 &
 fi
 `, cfg.StalwartAdminPassword, cfg.StalwartHTTPPort)
@@ -881,6 +899,8 @@ http://console-%s.%s {
 }
 `, domain)
 
+
+
 	caddyfile := fmt.Sprintf(`# Auto-generated Caddyfile by gcore
 {
     auto_https off
@@ -1008,6 +1028,19 @@ func writePocketIDEnv(configsDir string, cfg Config) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
+func sha512Crypt(password string) (string, error) {
+	cmd := exec.Command("openssl", "passwd", "-6", password)
+	out, err := cmd.Output()
+	if err != nil {
+		cmd = exec.Command("python3", "-c", fmt.Sprintf(`import crypt; print(crypt.crypt(%q, crypt.METHOD_SHA512))`, password))
+		out, err = cmd.Output()
+		if err != nil {
+			return "", err
+		}
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // writeStalwartConfig writes the Stalwart mail server database JSON configuration.
 func writeStalwartConfig(configsDir string, cfg Config) error {
 	configDir := filepath.Join(configsDir, "stalwart")
@@ -1053,7 +1086,6 @@ func writeTinyAuthConfig(configsDir string, cfg Config) error {
 	var envLines []string
 	envLines = append(envLines,
 		fmt.Sprintf("TINYAUTH_APPURL=%q", appURL),
-		"TINYAUTH_DATABASE_DRIVER=\"sqlite\"",
 		"TINYAUTH_DATABASE_PATH=\"/data/tinyauth.db\"",
 		fmt.Sprintf("TINYAUTH_SERVER_PORT=%d", cfg.TinyAuthPort),
 		"TINYAUTH_SERVER_ADDRESS=\"0.0.0.0\"",
@@ -1062,7 +1094,7 @@ func writeTinyAuthConfig(configsDir string, cfg Config) error {
 		fmt.Sprintf("TINYAUTH_LDAP_BINDPASSWORD=%q", ldapBindPassword),
 		fmt.Sprintf("TINYAUTH_LDAP_BASEDN=%q", ldapBaseDN),
 		"TINYAUTH_LDAP_INSECURE=\"true\"",
-		fmt.Sprintf("TINYAUTH_LDAP_SEARCHFILTER=%q", "(uid=%s)"),
+		fmt.Sprintf("TINYAUTH_LDAP_SEARCHFILTER=%q", "(|(uid=%[1]s)(mail=%[1]s))"),
 		"TINYAUTH_LABELPROVIDER=\"none\"",
 	)
 

@@ -127,10 +127,10 @@ release: prepare-os
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/gcore-darwin-amd64 .
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/gcore-darwin-arm64 .
 	@echo "==> Packaging guest OS rootfs image..."
-	@if [ -d "vms/rootfs" ]; then \
+	@if [ -d "$(ROOTFS_DIR)" ]; then \
 		tar -czf dist/gcore-rootfs.tar.gz -C vms rootfs; \
 		echo "RootFS packaged: dist/gcore-rootfs.tar.gz"; \
 	else \
-		echo "Warning: vms/rootfs does not exist. Run 'make prepare-os' first."; \
+		echo "Warning: $(ROOTFS_DIR) does not exist. Run 'make prepare-os' first."; \
 	fi
 

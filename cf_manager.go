@@ -181,7 +181,7 @@ func SetupCloudflareTunnel() (string, error) {
 	// GCore Admin Web UI (always enabled / default)
 	ingressRules = append(ingressRules, cloudflare.UnvalidatedIngressRule{
 		Hostname: fmt.Sprintf("gcore.%s", cfg.CFDomain),
-		Service:  "http://172.16.0.1:11462",
+		Service:  "http://127.0.0.1:11462",
 	})
 
 	// Wildcard fallback

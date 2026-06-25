@@ -118,11 +118,12 @@ func (p *program) run() {
 			StorageDisk: "vms/gcore_storage.img",
 			ExecArgs:    execArgs,
 			ExecEnv:     execEnv,
-			TapDev:      "tap_gcore",
+			TapDev:      "",
 			Background:  true,
 		}
 
 		log.Println("Starting guest VM in background...")
+		go provisionLLDAPMasterUser(cfgCopy)
 		if err := StartVM(vmCfg, p.vmStopChan); err != nil {
 			log.Printf("Service Warning: Guest VM exited with error: %v", err)
 		} else {

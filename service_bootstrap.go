@@ -2,15 +2,24 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed vms/roles.ndjson
 var rolesDataFS embed.FS
+
+//go:embed vms/spamfilter.toml
+var spamFilterData []byte
+
 
 // generateBootstrapFiles writes post-boot configuration scripts and ndjson plans
 // into the configs directory so the VM can self-configure on first boot.
@@ -321,7 +330,7 @@ wait_for_port() {
 
 	// Wait for Stalwart HTTP
 	if cfg.StalwartEnabled {
-		cmds = append(cmds, `wait_for_port localhost 8080 "Stalwart" 120`)
+		cmds = append(cmds, fmt.Sprintf(`wait_for_port localhost %d "Stalwart" 120`, cfg.StalwartHTTPPort))
 	}
 
 	// Wait for Pocket ID
@@ -344,12 +353,14 @@ wait_for_port() {
 	if cfg.StalwartEnabled {
 		cmds = append(cmds, `echo "--- Stalwart Bootstrap ---"`)
 		cmds = append(cmds, fmt.Sprintf(
-			`STALWART_URL="http://localhost:8080" STALWART_USER="admin" STALWART_PASSWORD="%[1]s" `+stalwartCliPath+` apply --file /configs/stalwart/bootstrap_plan.ndjson 2>&1 || echo "[bootstrap] Stalwart bootstrap plan may have already been applied"`, cfg.StalwartAdminPassword))
+			`STALWART_URL="http://localhost:%[2]d" STALWART_USER="admin" STALWART_PASSWORD="%[1]s" `+stalwartCliPath+` apply --file /configs/stalwart/bootstrap_plan.ndjson 2>&1 || echo "[bootstrap] Stalwart bootstrap plan may have already been applied"`, cfg.StalwartAdminPassword, cfg.StalwartHTTPPort))
 		cmds = append(cmds, fmt.Sprintf(
-			`STALWART_URL="http://localhost:8080" STALWART_USER="admin" STALWART_PASSWORD="%[1]s" `+stalwartCliPath+` apply --file /configs/stalwart/core_config_plan.ndjson 2>&1 || echo "[bootstrap] Stalwart core config plan may have already been applied"`, cfg.StalwartAdminPassword))
+			`STALWART_URL="http://localhost:%[2]d" STALWART_USER="admin" STALWART_PASSWORD="%[1]s" `+stalwartCliPath+` apply --file /configs/stalwart/roles.ndjson 2>&1 || echo "[bootstrap] Stalwart roles plan may have already been applied"`, cfg.StalwartAdminPassword, cfg.StalwartHTTPPort))
+		cmds = append(cmds, fmt.Sprintf(
+			`STALWART_URL="http://localhost:%[2]d" STALWART_USER="admin" STALWART_PASSWORD="%[1]s" `+stalwartCliPath+` apply --file /configs/stalwart/core_config_plan.ndjson 2>&1 || echo "[bootstrap] Stalwart core config plan may have already been applied"`, cfg.StalwartAdminPassword, cfg.StalwartHTTPPort))
 		cmds = append(cmds, `echo "[bootstrap] Restarting Stalwart in normal mode..."`)
 		cmds = append(cmds, `cp /var/log/stalwart.log /var/log/stalwart_recovery.log || true`)
-		cmds = append(cmds, `pkill -x stalwart || true`)
+		cmds = append(cmds, `pkill -x stalwart-mail || pkill -f stalwart || true`)
 		cmds = append(cmds, `sleep 2`)
 		cmds = append(cmds, `unset STALWART_RECOVERY_MODE STALWART_RECOVERY_ADMIN STALWART_RECOVERY_MODE_PORT`)
 		cmds = append(cmds, stalwartPath+` --config /configs/stalwart/config.json >/var/log/stalwart.log 2>&1 &`)
@@ -406,4 +417,139 @@ fi
 	content := strings.Join(cmds, "\n")
 	path := filepath.Join(configsDir, "bootstrap.sh")
 	return os.WriteFile(path, []byte(content), 0755)
+}
+
+// provisionLLDAPMasterUser logs in as LLDAP admin and creates the master username
+// specified in the configuration if it doesn't already exist, adding it to the admin group.
+func provisionLLDAPMasterUser(cfg Config) {
+	if cfg.MasterUsername == "admin" || cfg.MasterUsername == "" {
+		return
+	}
+	lldapURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)
+	log.Printf("Provisioning Master User %s in LLDAP at %s...", cfg.MasterUsername, lldapURL)
+
+	ready := false
+	for i := 0; i < 60; i++ {
+		resp, err := http.Get(lldapURL + "/")
+		if err == nil {
+			resp.Body.Close()
+			ready = true
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if !ready {
+		log.Printf("LLDAP did not become ready for provisioning master user")
+		return
+	}
+
+	loginPayload := fmt.Sprintf(`{"username":"admin","password":"%s"}`, cfg.LDAPUserPass)
+	resp, err := http.Post(lldapURL+"/auth/simple/login", "application/json", strings.NewReader(loginPayload))
+	if err != nil {
+		log.Printf("Failed to login to LLDAP for provisioning: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var loginData struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loginData); err != nil {
+		log.Printf("Failed to decode LLDAP login response: %v", err)
+		return
+	}
+	token := loginData.Token
+
+	groupQuery := `{"query":"query { groups { id name } }"}`
+	req, err := http.NewRequest("POST", lldapURL+"/api/graphql", strings.NewReader(groupQuery))
+	if err != nil {
+		log.Printf("Failed to create request for groups query: %v", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	gqlResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("Failed to fetch LLDAP groups: %v", err)
+		return
+	}
+	defer gqlResp.Body.Close()
+
+	var groupData struct {
+		Data struct {
+			Groups []struct {
+				Id   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"groups"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(gqlResp.Body).Decode(&groupData); err != nil {
+		log.Printf("Failed to decode groups query response: %v", err)
+		return
+	}
+
+	adminGroupID := 1
+	for _, g := range groupData.Data.Groups {
+		if g.Name == "lldap_admin" {
+			adminGroupID = g.Id
+			break
+		}
+	}
+
+	doGraphQL := func(queryName, queryStr string) bool {
+		req, err := http.NewRequest("POST", lldapURL+"/api/graphql", strings.NewReader(queryStr))
+		if err != nil {
+			log.Printf("[%s] failed to create GraphQL request: %v", queryName, err)
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Printf("[%s] GraphQL request failed: %v", queryName, err)
+			return false
+		}
+		defer resp.Body.Close()
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		var result map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &result); err == nil {
+			if errors, ok := result["errors"]; ok {
+				errorsStr := fmt.Sprintf("%v", errors)
+				if (queryName == "createUser" && (strings.Contains(strings.ToLower(errorsStr), "already exists") || strings.Contains(strings.ToLower(errorsStr), "unique constraint"))) ||
+					(queryName == "addUserToGroup" && (strings.Contains(strings.ToLower(errorsStr), "already a member") || strings.Contains(strings.ToLower(errorsStr), "unique constraint"))) {
+					return true
+				}
+				log.Printf("[%s] GraphQL returned errors: %s", queryName, errorsStr)
+				return false
+			}
+		}
+		return true
+	}
+
+	domain := cfg.CFDomain
+	if domain == "" {
+		domain = "localhost"
+	}
+
+	createUserQuery := fmt.Sprintf(`{"query":"mutation { createUser(user: { id: \"%s\", email: \"%s@%s\", displayName: \"%s\", firstName: \"%s\", lastName: \"Admin\" }) { id } }" }`,
+		cfg.MasterUsername, cfg.MasterUsername, domain, cfg.MasterUsername, cfg.MasterUsername)
+	if !doGraphQL("createUser", createUserQuery) {
+		return
+	}
+
+	addToGroupQuery := fmt.Sprintf(`{"query":"mutation { addUserToGroup(userId: \"%s\", groupId: %d) { ok } }" }`, cfg.MasterUsername, adminGroupID)
+	doGraphQL("addUserToGroup", addToGroupQuery)
+
+	cmd := exec.Command("ldappasswd", "-x",
+		"-D", fmt.Sprintf("uid=admin,ou=people,%s", cfg.LDAPBaseDN),
+		"-w", cfg.LDAPUserPass,
+		"-H", fmt.Sprintf("ldap://127.0.0.1:%d", cfg.LDAPPort),
+		"-s", cfg.LDAPUserPass,
+		fmt.Sprintf("uid=%s,ou=people,%s", cfg.MasterUsername, cfg.LDAPBaseDN),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("Failed to set master user password via ldappasswd: %v — output: %s", err, string(out))
+	} else {
+		log.Printf("Successfully provisioned LLDAP master user password for %s", cfg.MasterUsername)
+	}
 }

@@ -32,17 +32,19 @@ func StartVM(cfg VMRunnerConfig, stopChan <-chan struct{}) error {
 	guestIP := "172.16.0.2"
 
 	// 1. Setup host TAP network interface
-	log.Printf("[%s] Setting up host TAP network interface %s...", cfg.Name, cfg.TapDev)
-	if err := SetupTapInterface(cfg.TapDev, hostIP, guestIP); err != nil {
-		return fmt.Errorf("failed to setup tap interface: %w", err)
+	if cfg.TapDev != "" {
+		log.Printf("[%s] Setting up host TAP network interface %s...", cfg.Name, cfg.TapDev)
+		if err := SetupTapInterface(cfg.TapDev, hostIP, guestIP); err != nil {
+			return fmt.Errorf("failed to setup tap interface: %w", err)
+		}
+		defer func() {
+			log.Printf("[%s] Cleaning up TAP interface %s...", cfg.Name, cfg.TapDev)
+			CleanupTapInterface(cfg.TapDev, guestIP)
+		}()
 	}
-	defer func() {
-		log.Printf("[%s] Cleaning up TAP interface %s...", cfg.Name, cfg.TapDev)
-		CleanupTapInterface(cfg.TapDev, guestIP)
-	}()
 
 	// 2. Write configuration file for krun_worker
-	configDir := "/etc/gcore/run"
+	configDir := "vms/run"
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create run config directory: %w", err)
 	}
@@ -75,7 +77,7 @@ func StartVM(cfg VMRunnerConfig, stopChan <-chan struct{}) error {
 	log.Printf("[%s] Executing krun worker: %s %s...", cfg.Name, workerPath, configPath)
 	cmd := exec.Command(workerPath, configPath)
 	if cfg.Background {
-		logFilePath := "/etc/gcore/run/vm.log"
+		logFilePath := "vms/run/vm.log"
 		logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to open vm log file %s: %w", logFilePath, err)

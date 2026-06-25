@@ -42,9 +42,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod +x /usr/bin/pocket-id \
     && curl -L -o /usr/bin/tinyauth https://github.com/tinyauthapp/tinyauth/releases/download/v5.0.7/tinyauth-amd64 \
     && chmod +x /usr/bin/tinyauth \
-    && curl -L -o /tmp/stalwart.tar.gz https://github.com/stalwartlabs/stalwart/releases/download/v0.9.4/stalwart-mail-x86_64-unknown-linux-gnu.tar.gz \
+    && curl -L -o /tmp/stalwart.tar.gz https://github.com/stalwartlabs/stalwart/releases/download/v0.16.10/stalwart-x86_64-unknown-linux-gnu.tar.gz \
     && tar -xzf /tmp/stalwart.tar.gz -C /tmp \
-    && mv /tmp/stalwart-mail /usr/bin/stalwart \
+    && mv /tmp/stalwart /usr/bin/stalwart \
     && rm -rf /tmp/stalwart.tar.gz \
     && curl -L -o /tmp/stalwart-cli.tar.xz https://github.com/stalwartlabs/cli/releases/download/v1.0.9/stalwart-cli-x86_64-unknown-linux-gnu.tar.xz \
     && tar -xf /tmp/stalwart-cli.tar.xz -C /tmp \

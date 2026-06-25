@@ -44,6 +44,19 @@ func main() {
 	}
 	defer ctx.Free()
 
+	if cfg.TapDev == "" {
+		log.Printf("Using TSI user-mode networking")
+		if err := ctx.DisableImplicitVsock(); err != nil {
+			log.Printf("Worker Warning: failed to disable implicit vsock: %v", err)
+		}
+		if err := ctx.AddVsock(krun.TSIHijackInet); err != nil {
+			log.Fatalf("Worker failed to add vsock with TSI: %v", err)
+		}
+		if err := ctx.SetPortMap(nil); err != nil {
+			log.Printf("Worker Warning: failed to set port map: %v", err)
+		}
+	}
+
 	// Configure CPU and RAM
 	if err := ctx.SetVMConfig(krun.VMConfig{
 		NumVCPUs: uint8(cfg.VCPUs),

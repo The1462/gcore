@@ -210,6 +210,7 @@ func main() {
 			TapDev:      *vmTap,
 		}
 
+		go provisionLLDAPMasterUser(cfgCopy)
 		if err := StartVM(vmCfg, nil); err != nil {
 			fmt.Printf("Error running VM: %v\n", err)
 			os.Exit(1)
