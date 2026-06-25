@@ -1,6 +1,6 @@
 module gcore
 
-go 1.22.0
+go 1.25.5
 
 require (
 	github.com/cloudflare/cloudflare-go v0.117.0
